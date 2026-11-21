@@ -6,6 +6,8 @@ Pages:
               Question, and Your move where it fits
     Facts     the lesson's key facts and formulae, tap Show to reveal
     Bank      mathsgen's question bank, for anything no lesson covers yet
+    Algebra   an algebrakit board on its own: equations, brackets, expand,
+              factorise, letters, change the subject (when algebrakit is found)
 
 Built for a shared screen: a teacher and a student look at it together, so
 answers stay hidden until revealed. Opened from the hub through
@@ -29,6 +31,13 @@ from editorkit.web import cards, prose  # noqa: E402
 from editorkit.web import tiles as web_tiles  # noqa: E402
 
 from mathskit import blocks, boards, explore, graph, joins, lessons, questions, typeset  # noqa: E402
+
+# algebrakit's question maker for the Algebra page. boards has already put
+# algebrakit on the path when it can be found; without it there is no page.
+try:
+    from algebrakit import equations as algebra_equations  # noqa: E402
+except ImportError:
+    algebra_equations = None
 
 TITLE = 'Maths'
 EMOJI = '\U0001f9ee'
@@ -403,6 +412,74 @@ class Questions:
         self.tile.show(page)
 
 
+# --- Algebra ------------------------------------------------------------------
+
+ALGEBRA_TASKS = {'expand': 'Expand and simplify', 'factorise': 'Factorise fully',
+                 'simplify': 'Simplify'}
+ALGEBRA_HOW = ('Drag a term across = or onto a like term. Drag what multiplies a letter '
+               'across to divide. Drag a bracket\'s number into it to expand. Tap = to '
+               'swap sides.')
+
+
+class AlgebraPage:
+    """The Algebra page: one algebrakit board at a time, for practice outside
+    any lesson (the same boards as algebrakit's lab). Each button deals a
+    fresh board of its kind; tapping the lit one deals another. The board
+    plays entirely in the page, so Python only redraws for a new one."""
+
+    KINDS = (('equation', 'Equation'), ('brackets', 'Brackets'), ('expand', 'Expand'),
+             ('factorise', 'Factorise'), ('letters', 'Letters'), ('subject', 'Subject'),
+             ('twice', 'Subject twice'))
+
+    def __init__(self, window, extras):
+        self.tile = web_tiles.Cards(window, on_pick=self.picked,
+                                    zoom_key='mathskit-algebra', extra_css=extras)
+        self.rng = random.Random()
+        self.kind = 'equation'
+        self.shape = self.deal(self.kind)
+        self.show()
+
+    def deal(self, kind):
+        """A fresh board shape of one kind, from algebrakit.equations."""
+        make = algebra_equations
+        if kind == 'brackets':
+            return make.random_equation(self.rng, self.rng.choice(make.BRACKET_FORMS))
+        if kind in ('expand', 'factorise'):
+            forms = make.EXPAND_FORMS if kind == 'expand' else make.FACTORISE_FORMS
+            return make.random_expression(self.rng, self.rng.choice(forms))
+        if kind == 'letters':
+            return make.random_lettered(self.rng)
+        if kind == 'subject':
+            return make.random_subject(self.rng, level=self.rng.choice((1, 2)))
+        if kind == 'twice':
+            return make.random_subject(self.rng, level=3)
+        return make.random_equation(self.rng)
+
+    def picked(self, item):
+        if item in dict(self.KINDS):
+            self.kind = item
+            self.shape = self.deal(item)
+            self.show()
+
+    def task(self):
+        if self.shape.get('subject'):
+            return 'Make %s the subject' % self.shape['subject']
+        return ALGEBRA_TASKS.get(self.shape.get('goal'), '')
+
+    def show(self):
+        page = cards.Page()
+        buttons = [(label, kind, kind == self.kind) for kind, label in self.KINDS]
+        task = self.task()
+        page.prose(prose.heading('Algebra', 1),
+                   button_row(page.go, buttons),
+                   '<p style="color:var(--muted);margin:2px 0 6px">%s</p>'
+                   % blocks.escape(ALGEBRA_HOW),
+                   ('<p style="font-size:19px;font-weight:650;margin:10px 0 0">%s</p>'
+                    % blocks.escape(task)) if task else '',
+                   boards.html(self.shape))
+        self.tile.show(page)
+
+
 # --- Not on a tab: kept to reuse in a graphs lesson ----------------------------
 
 def graphs_page():
@@ -470,6 +547,9 @@ def main():
     window.add_page('Lesson', lesson_page.tile)
     window.add_page('Facts', facts_page.tile)
     window.add_page('Bank', bank.tile)
+    if algebra_equations is not None:
+        algebra = AlgebraPage(window, extras)
+        window.add_page('Algebra', algebra.tile)
     window.set_page(FIRST_PAGE)
     window.show()
     return window
