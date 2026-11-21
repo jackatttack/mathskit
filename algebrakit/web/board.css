@@ -1,0 +1,64 @@
+/* algebrakit board. Theme colours only (var(--text) and friends); the
+   family colours below are the one exception, shared with mathskit. */
+
+/* --- Look (editable) --- */
+.ak-board { --ak-number: #f0883e; --ak-letter: #58a6ff; --ak-square: #d2a8ff; --ak-size: 34px; }
+
+.ak-board { margin: 10px 0 18px; -webkit-user-select: none; user-select: none;
+  -webkit-touch-callout: none; }
+.ak-stage { position: relative; touch-action: none; padding: 6px 0; }
+.ak-live .katex-display { margin: 0.4em 0; }
+.ak-live .katex { font-size: var(--ak-size); }
+.ak-ghosts { position: absolute; left: 0; top: 0; right: 0; bottom: 0; pointer-events: none; }
+
+/* Pieces: inline-block so they can fly (transforms skip inline boxes). */
+.ak-live [data-t], .ak-live [data-c], .ak-live [data-k], .ak-live [data-eq],
+.ak-live [data-side] { display: inline-block; cursor: pointer; }
+.ak-live [data-side] { border-radius: 10px; }
+.ak-live [data-t] { border-radius: 8px; padding: 0 2px; }
+[data-f="n"] { color: var(--ak-number); }
+/* Letter families (x1, x2, a1...) are coloured by board.js (FAMILY_FIXED,
+   FAMILY_PALETTE), so any letter gets a colour. */
+[data-f="g"] { color: var(--text); }
+.ak-live [data-t].ak-picked { background: var(--wash-strong); box-shadow: 0 0 0 2px var(--accent); }
+.ak-live .ak-target { background: var(--wash-strong); box-shadow: 0 0 0 2px #3fb950; }
+.ak-live .ak-lifted { opacity: 0.25; }
+.ak-flip { animation: ak-flip 520ms ease; }
+.ak-touched { animation: ak-pulse 520ms ease; }
+@keyframes ak-flip { 0% { transform: scale(1); } 40% { transform: scale(1.25); } 100% { transform: scale(1); } }
+@keyframes ak-pulse { 0% { filter: none; } 40% { filter: brightness(1.6); } 100% { filter: none; } }
+
+/* The piece under a finger, and the ghost of a piece collected away. */
+.ak-float, .ak-ghost { position: absolute; z-index: 50; pointer-events: none;
+  font-size: var(--ak-size); line-height: 1.2; color: var(--text); }
+.ak-float { font-size: 34px; border-radius: 10px; padding: 0 4px;
+  transition: background 120ms ease, box-shadow 120ms ease; }
+.ak-float [data-t], .ak-float [data-c] { display: inline-block; }
+.ak-float-yes { background: rgba(63, 185, 80, 0.18); box-shadow: 0 0 0 2px #3fb950; }
+.ak-float-no { background: rgba(255, 123, 114, 0.16); box-shadow: 0 0 0 2px #ff7b72; }
+
+/* The bar under the other side: drop a lone 3x on it to divide. */
+.ak-under { position: absolute; height: 26px; border-top: 3px dashed var(--muted);
+  color: var(--muted); font-size: 15px; font-weight: 600; text-align: center;
+  padding-top: 3px; opacity: 0.7; transition: all 120ms ease; }
+.ak-under-on { border-top-color: #3fb950; color: #3fb950; opacity: 1; }
+
+/* The written trail: each earlier line with the move that followed it. */
+.ak-trail { color: var(--muted); }
+.ak-line { display: flex; align-items: baseline; gap: 12px; padding: 3px 2px;
+  border-bottom: 1px solid var(--rule); font-size: 19px; }
+.ak-line-tex { flex: 1; min-width: 0; overflow-x: auto; }
+.ak-line-op { font-size: 15px; font-weight: 600; color: var(--accent); white-space: nowrap; }
+
+.ak-note { min-height: 1.4em; font-size: 16px; color: var(--muted); text-align: center;
+  opacity: 0; transition: opacity 200ms ease; padding: 2px 8px; }
+.ak-note-on { opacity: 1; }
+.ak-solved .ak-note { color: #3fb950; font-weight: 650; font-size: 19px; }
+.ak-solved .ak-live { animation: ak-pulse 700ms ease; }
+
+.ak-pills, .ak-tools { display: flex; flex-wrap: wrap; gap: 8px; justify-content: center;
+  margin-top: 8px; min-height: 38px; }
+.ak-pill, .ak-tool { cursor: pointer; padding: 7px 14px; border-radius: 999px; font-size: 16px;
+  font-weight: 600; }
+.ak-pill { background: var(--wash-strong); color: var(--accent); }
+.ak-tool { background: var(--wash); color: var(--muted); }
