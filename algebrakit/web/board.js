@@ -81,14 +81,45 @@ never a Python frame loop.
     }
   }
 
+  // --- Page zoom ---------------------------------------------------------------
+  //
+  // editorkit's pinch zoom is CSS zoom on the page (pinch='reflow'). Three
+  // measures then differ: a touch's clientX/Y (screen points), the rects
+  // getBoundingClientRect gives (this old WebKit may or may not apply the
+  // zoom to them), and the CSS pixels that style.left and translate are
+  // written in (drawn zoomed). measure() reads both ratios from the page
+  // rather than assuming either; at zoom 1 both are 1 and nothing changes.
+  //   zoom   screen points per CSS pixel (CSS zoom multiplied up the tree)
+  //   rect   rect units per CSS pixel (a rect's width over offsetWidth)
+  // 2026-11-21: zoomed in, the lifted piece ran ahead of the finger.
+
+  function pageZoom(el) {
+    var zoom = 1;
+    for (var node = el; node && node.nodeType === 1; node = node.parentNode) {
+      var value = parseFloat(window.getComputedStyle(node).zoom);
+      if (value > 0) { zoom *= value; }
+    }
+    return zoom;
+  }
+
+  function measure(el) {
+    var width = el.offsetWidth;
+    var rect = width ? el.getBoundingClientRect().width / width : 1;
+    return {zoom: pageZoom(el) || 1, rect: rect || 1};
+  }
+
+  // Where each [data-attr] piece sits inside root, in CSS pixels (ready for
+  // style.left and translate inside root).
   function rectsOf(root, attr) {
     var out = {};
     var base = root.getBoundingClientRect();
+    var scale = measure(root).rect;
     var els = root.querySelectorAll('[data-' + attr + ']');
     for (var i = 0; i < els.length; i++) {
       var r = els[i].getBoundingClientRect();
       out[els[i].getAttribute('data-' + attr)] = {
-        left: r.left - base.left, top: r.top - base.top, width: r.width, height: r.height,
+        left: (r.left - base.left) / scale, top: (r.top - base.top) / scale,
+        width: r.width / scale, height: r.height / scale,
         html: els[i].outerHTML
       };
     }
@@ -430,9 +461,13 @@ never a Python frame loop.
     return [r.left + r.width / 2 - x, r.top + r.height / 2 - y];
   }
 
-  function at(touch, offset) {
-    offset = offset || [0, 0];
-    return [touch.clientX + offset[0], touch.clientY + offset[1]];
+  // Where the finger is now, in the rects' measure: the anchored starting
+  // point plus the finger's movement, converted from screen points to rect
+  // units (t.measure, taken when the touch went down).
+  function at(t, touch) {
+    var k = t.measure.rect / t.measure.zoom;
+    return [t.x + t.offset[0] + (touch.clientX - t.x) * k,
+            t.y + t.offset[1] + (touch.clientY - t.y) * k];
   }
 
   Board.prototype.down = function (e) {
@@ -467,6 +502,7 @@ never a Python frame loop.
           bracket ? +bracket.getAttribute('data-b') :
           term ? +term.getAttribute('data-t') : null,
       dragging: false,
+      measure: measure(this.stage),
       offset: anchor(touch, e.target)
     };
     if (this.touch.piece) { e.preventDefault(); }   // hold the page still for a drag
@@ -480,8 +516,11 @@ never a Python frame loop.
     if (!t.dragging && Math.sqrt(dx * dx + dy * dy) < DRAG_START) { return; }
     e.preventDefault();
     if (!t.dragging) { this.lift(t); }
-    t.float.style.transform = 'translate(' + dx + 'px,' + dy + 'px) scale(1.12)';
-    var p = at(touch, t.offset);
+    // The float is drawn zoomed, so it moves by the finger's screen distance
+    // divided by the zoom: it stays under the finger at any page zoom.
+    var zoom = t.measure.zoom;
+    t.float.style.transform = 'translate(' + dx / zoom + 'px,' + dy / zoom + 'px) scale(1.12)';
+    var p = at(t, touch);
     this.hover(p[0], p[1]);
   };
 
@@ -496,8 +535,8 @@ never a Python frame loop.
     var f = document.createElement('div');
     f.className = 'ak-float katex';
     f.innerHTML = t.piece.outerHTML;
-    f.style.left = (r.left - base.left) + 'px';
-    f.style.top = (r.top - base.top) + 'px';
+    f.style.left = (r.left - base.left) / t.measure.rect + 'px';
+    f.style.top = (r.top - base.top) / t.measure.rect + 'px';
     f.style.color = window.getComputedStyle(t.piece).color;   // keep its family colour
     this.stage.appendChild(f);
     t.float = f;
@@ -517,9 +556,10 @@ never a Python frame loop.
     var r = side.getBoundingClientRect();
     var bar = document.createElement('div');
     bar.className = 'ak-under';
-    bar.style.left = (r.left - base.left - 6) + 'px';
-    bar.style.width = (r.width + 12) + 'px';
-    bar.style.top = (r.bottom - base.top + 6) + 'px';
+    var scale = t.measure.rect;
+    bar.style.left = ((r.left - base.left) / scale - 6) + 'px';
+    bar.style.width = (r.width / scale + 12) + 'px';
+    bar.style.top = ((r.bottom - base.top) / scale + 6) + 'px';
     bar.textContent = E.divide(this.eq, t.id, t.kind === 'bracket' ? 'bracket' : undefined).label;
     this.ghosts.appendChild(bar);
     t.under = bar;
@@ -677,9 +717,9 @@ never a Python frame loop.
         'border-radius:6px;background:#ff3b30;z-index:60;pointer-events:none';
       this.stage.appendChild(dot);
     }
-    dot.style.left = (x - base.left) + 'px';
-    dot.style.top = (y - base.top) + 'px';
     var t = this.touch;
+    dot.style.left = (x - base.left) / t.measure.rect + 'px';
+    dot.style.top = (y - base.top) / t.measure.rect + 'px';
     var line = this.debugLine;
     if (!line) {
       line = this.debugLine = document.createElement('div');
@@ -687,7 +727,8 @@ never a Python frame loop.
       this.el.insertBefore(line, this.el.firstChild);
     }
     line.textContent = 'offset ' + Math.round(t.offset[0]) + ',' + Math.round(t.offset[1]) +
-      ' \u00b7 zoom ' + (document.documentElement.style.zoom || 1) +
+      ' \u00b7 zoom ' + t.measure.zoom.toFixed(2) + ' rect ' + t.measure.rect.toFixed(2) +
+      ' \u00b7 at ' + Math.round(x) + ',' + Math.round(y) +
       ' \u00b7 scroll ' + Math.round(window.pageYOffset) +
       ' \u00b7 ' + (move ? move.kind : 'no move');
   };
@@ -732,7 +773,7 @@ never a Python frame loop.
     if (t.dragging) {
       e.preventDefault();
       var touch = e.changedTouches[0];
-      var p = at(touch, t.offset);
+      var p = at(t, touch);
       var move = this.dropAt(t, p[0], p[1]);
       var float = t.float;
       t.piece.classList.remove('ak-lifted');
