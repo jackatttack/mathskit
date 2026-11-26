@@ -11,25 +11,28 @@ iCloud folder; elsewhere it looks in Documents/library only.
 
 The tidy CSVs are built by tools/build_datasets.py into library/datasets/.
 They are personal teaching data, so they never ship inside the mathskit
-release. Every device finds them in Pythonista's iCloud Drive folder,
-library/datasets (the shared data folder: copy a dataset there once and
-every device sees it). load() looks in this device's Documents/library
-first, then in iCloud; the iCloud folder is asked of iOS, never written
-in. When iCloud has only a placeholder for a file (not yet on this
-device), load() asks iCloud to download it and waits a moment.
+release. The shared copy lives in Pythonista's iCloud Drive folder,
+library/datasets; library/copy_to_this_device.py (kept beside it in
+iCloud) copies it onto a device's own Documents/library, which load()
+reads first. Only when there is no local copy does load() read iCloud
+(the folder is asked of iOS, never written in).
+
+Never waits on iCloud (2026-11-26: waiting for downloads and reading
+sprites from iCloud inside the tool froze Pythonista on the iPad). A file
+iCloud has not downloaded counts as missing, and the message says to run
+copy_to_this_device.py.
 
 Numbers come back as int or float, blanks as None.
 """
 import csv
 import os
-import time
 
 # ---- Settings (editable) -----------------------------------------------------
 
 # The folder inside each library the tidy files sit in.
 DATA_FOLDER = ('library', 'datasets')
-# How long load() waits for iCloud to download a file it has only a placeholder for.
-ICLOUD_WAIT_SECONDS = 4
+# The script that copies the iCloud library onto a device (it lives in iCloud's library/).
+COPY_SCRIPT = 'library/copy_to_this_device.py'
 
 FILES = {'pokemon': 'pokemon.csv', 'countries': 'countries.csv'}
 TITLES = {'pokemon': 'Pokémon', 'countries': 'Countries'}
@@ -96,34 +99,21 @@ def placeholder(folder, name):
     return os.path.join(folder, '.%s.icloud' % name)
 
 
-def request_download(folder, name):
-    """Ask iCloud to bring name down to this device. True when asked."""
-    try:
-        from objc_util import ObjCClass, nsurl
-        manager = ObjCClass('NSFileManager').defaultManager()
-        return bool(manager.startDownloadingUbiquitousItemAtURL_error_(nsurl(os.path.join(folder, name)), None))
-    except Exception:
-        return False
-
-
 def find(name, search=None):
-    """The first path to name in search (default folders()), or None. A
-    file iCloud has not downloaded yet is asked for, and waited on for up
-    to ICLOUD_WAIT_SECONDS."""
+    """The first path to name in search (default folders()), or None. Never
+    waits: a file iCloud has not downloaded yet is not found."""
     search = folders() if search is None else search
     for folder in search:
         path = os.path.join(folder, name)
         if os.path.isfile(path):
             return path
-    for folder in search:
-        if os.path.exists(placeholder(folder, name)) and request_download(folder, name):
-            path = os.path.join(folder, name)
-            deadline = time.time() + ICLOUD_WAIT_SECONDS
-            while time.time() < deadline:
-                if os.path.isfile(path):
-                    return path
-                time.sleep(0.25)
     return None
+
+
+def waiting_in_icloud(name, search=None):
+    """True when iCloud holds name but has not downloaded it to this device."""
+    search = folders() if search is None else search
+    return any(os.path.exists(placeholder(folder, name)) for folder in search)
 
 
 def load(key, search=None):
@@ -132,10 +122,14 @@ def load(key, search=None):
         return _loaded[key]
     path = find(FILES[key], search)
     if path is None:
+        if waiting_in_icloud(FILES[key], search):
+            raise MissingData(
+                '%s is in iCloud but not on this device yet. Run %s (in iCloud Drive, '
+                'Pythonista 3) once with a connection, then open Maths again.' % (FILES[key], COPY_SCRIPT))
         raise MissingData(
             'No %s yet. Put it in library/datasets in Pythonista\'s iCloud Drive folder '
-            '(projects/mathskit/tools/build_datasets.py builds it). If it is there, iCloud may '
-            'still be downloading it: tap New data in a moment.' % FILES[key])
+            '(projects/mathskit/tools/build_datasets.py builds it), then run %s on each device.'
+            % (FILES[key], COPY_SCRIPT))
     with open(path, newline='', encoding='utf-8') as handle:
         rows = [to_row(row) for row in csv.DictReader(handle)]
     _loaded[key] = Source(key, rows, path)
@@ -156,8 +150,8 @@ _sprites = {}
 def sprites(numbers, search=None, limit=SPRITE_LIMIT):
     """{number: 'data:image/png;base64,...'} for the Pokédex numbers whose
     sprite is on this device; none when there are more than limit (a chart
-    of every Pokémon shows names only). A sprite iCloud has not downloaded
-    yet is asked for and turns up on a later chart."""
+    of every Pokémon shows names only). Reads only files already here: a
+    sprite iCloud has not downloaded is skipped, never waited on."""
     import base64
     numbers = sorted({int(number) for number in numbers if number})
     if not numbers or len(numbers) > limit:
@@ -178,8 +172,6 @@ def sprites(numbers, search=None, limit=SPRITE_LIMIT):
                     _sprites[number] = 'data:image/png;base64,' + base64.b64encode(handle.read()).decode('ascii')
                 found[number] = _sprites[number]
                 break
-            if os.path.exists(placeholder(home, name)):
-                request_download(home, name)
     return found
 
 
