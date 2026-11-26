@@ -26,8 +26,9 @@ Everything after the draw happens in the page, with no trip to Python:
 The script only draws what the spec says (charts.py works out every number)
 and checks drags against the spec's own values. Labels with a meaning
 colour (a Pokédex colour, a type, a continent) are drawn in it (COLOURS).
-Touch is editorkit's window.ekTouch (editorkit.web.touch, 0.6.0 or later):
-what a finger landed on, never where clientX/Y says it is.
+Touch is editorkit's window.ekTouch: what a finger landed on, never where
+clientX/Y says it is. SCRIPT is the page's extra_js (AFTER_SHELL, editorkit
+0.7.0): it runs after editorkit's shell, so it never waits for ekTouch.
 """
 import html as html_module
 import json
@@ -219,6 +220,10 @@ def format_number(value):
     return ('%g' % value)
 
 
+# typeset.page_js() sends SCRIPT as the page's extra_js (after the shell);
+# CSS still rides in typeset.page_extras() with the other parts.
+AFTER_SHELL = True
+
 CSS = """
 .ch-deal { margin: 6px 0 24px; }
 .ch-title { font: 650 19px -apple-system, sans-serif; margin: 10px 0 2px; }
@@ -315,7 +320,7 @@ SCRIPT = r"""
    colours from chart_page.py). Gives: nothing back to Python; every tap
    and drag is handled here. Holds no statistics beyond reading the spec.
 
-   Touch is editorkit's (editorkit.web.touch, window.ekTouch, 0.6.0): taps
+   Touch is editorkit's (editorkit.web.touch, window.ekTouch): taps
    act on the element a finger lands on (data-t: a bar, a slice, a grid
    cell to plot in, a band to read across from), never on clientX/Y, which
    drifts in the old UIWebView under page zoom. Handles (data-h) sit on
@@ -1310,18 +1315,13 @@ SCRIPT = r"""
     el.mkChart = state;
     kit.setup(state);
     paint(state);
-    attach(state, 0);
+    attach(state);
   }
 
-  // Hook the chart to editorkit's touch once the shell's ekTouch is there
-  // (this script can load before the shell's own script does).
-  function attach(state, tries) {
+  // Hook the chart to editorkit's touch. This script is the page's extra_js
+  // (editorkit 0.7.0), so it runs after the shell: ekTouch is already there.
+  function attach(state) {
     var el = state.el;
-    if (!window.ekTouch) {
-      if (tries < 40) { setTimeout(function () { attach(state, tries + 1); }, 50); return; }
-      say(el, 'Update Toolbox (editorkit 0.6.0 or later) to tap and drag this chart.', true);
-      return;
-    }
     // editorkit's touch: taps by the element landed on (data-t), drags of
     // handles (data-h) by the finger's movement in CSS pixels.
     window.ekTouch.surface(el, {
@@ -1472,23 +1472,12 @@ SCRIPT = r"""
     button.classList.toggle('ch-lit', sorted);
   }
 
-  // Our buttons (data-ch) act on finger-up through editorkit's touch.buttons,
-  // registered once the shell's ekTouch is there (this script loads first).
-  var buttonsReady = false;
-  function readyButtons(tries) {
-    if (buttonsReady) { return; }
-    if (window.ekTouch) {
-      window.ekTouch.buttons('data-ch', act);
-      buttonsReady = true;
-    } else if ((tries || 0) < 40) {
-      setTimeout(function () { readyButtons((tries || 0) + 1); }, 50);
-    }
-  }
+  // Our buttons (data-ch) act on finger-up through editorkit's touch.buttons.
+  window.ekTouch.buttons('data-ch', act);
 
   // ---- Finding charts as pages appear ----------------------------------------------------------------
 
   function scan() {
-    readyButtons();
     var found = document.querySelectorAll('.ch-chart:not([data-ch-done])');
     for (var i = 0; i < found.length; i++) {
       found[i].setAttribute('data-ch-done', '1');

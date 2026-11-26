@@ -497,8 +497,8 @@ class ChartsPage:
     """
 
     def __init__(self, window, extras):
-        self.tile = web_tiles.Cards(window, on_pick=self.picked,
-                                    zoom_key='mathskit-charts', extra_css=extras)
+        self.tile = web_tiles.Cards(window, on_pick=self.picked, zoom_key='mathskit-charts',
+                                    extra_css=extras, extra_js=typeset.page_js())
         self.rng = random.Random()
         found = datasets.available()
         self.source_key = found[0] if found else 'pokemon'
@@ -605,6 +605,7 @@ def graphs_page():
 
 def main():
     """Open the Maths window over the code (or bring it back)."""
+    ek.require('0.7.0', 'Maths')     # the Charts page runs as extra_js
     window = ek.Window(TITLE, emoji=EMOJI, key=WINDOW_KEY)
     extras = typeset.page_extras()
     first = lessons.ALL[0]

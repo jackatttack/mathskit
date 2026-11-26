@@ -57,11 +57,18 @@ def page_extras():
     return _cached
 
 
+def page_js():
+    """extra_js for a page: the parts marked AFTER_SHELL (chart_page). They
+    run after editorkit's shell (0.7.0), so ekTouch and ekSend are there."""
+    return '\n;\n'.join(part.SCRIPT for part in PAGE_PARTS if getattr(part, 'AFTER_SHELL', False))
+
+
 def build_extras(folder=KATEX_FOLDER):
     css = read_text(folder, 'katex.min.css')
     css = FONT_URL.sub(lambda match: font_data_url(folder, match), css)
     scripts = [read_text(folder, 'katex.min.js'), read_text(folder, 'auto-render.min.js')]
-    scripts += [part.SCRIPT for part in PAGE_PARTS]
+    # Parts marked AFTER_SHELL go as the page's extra_js instead (page_js).
+    scripts += [part.SCRIPT for part in PAGE_PARTS if not getattr(part, 'AFTER_SHELL', False)]
     script = '\n;\n'.join(safe_script(part) for part in scripts)
     styles = '\n'.join(part.CSS for part in PAGE_PARTS)
     return '%s\n%s\n</style><script>%s</script><style>' % (css, styles, script)
