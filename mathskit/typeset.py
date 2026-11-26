@@ -19,11 +19,11 @@ import base64
 import os
 import re
 
-from . import blocks, boards, card_page, graph_page, question_page
+from . import blocks, boards, card_page, chart_page, graph_page, question_page
 
 # Each page part brings CSS and SCRIPT; all of them ride in every page's extras.
 # boards brings algebrakit's touch board (empty when algebrakit is missing).
-PAGE_PARTS = (blocks, graph_page, question_page, card_page, boards)
+PAGE_PARTS = (blocks, graph_page, question_page, card_page, chart_page, boards)
 
 # KaTeX: bundled beside the tool in a release (katex/), else the shared
 # library copy (library/katex) while developing.

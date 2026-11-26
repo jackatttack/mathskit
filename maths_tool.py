@@ -6,6 +6,8 @@ Pages:
               Question, and Your move where it fits
     Facts     the lesson's key facts and formulae, tap Show to reveal
     Bank      mathsgen's question bank, for anything no lesson covers yet
+    Charts    statistical charts from Pokémon and countries data: read them,
+              finish drawing them, answer questions (mathskit.charts)
     Algebra   an algebrakit board on its own: equations, brackets, expand,
               factorise, letters, change the subject (when algebrakit is found)
 
@@ -30,7 +32,8 @@ import editorkit as ek  # noqa: E402
 from editorkit.web import cards, prose  # noqa: E402
 from editorkit.web import tiles as web_tiles  # noqa: E402
 
-from mathskit import blocks, boards, explore, graph, joins, lessons, questions, typeset  # noqa: E402
+from mathskit import (blocks, boards, chart_page, charts, datasets, explore, graph, joins,  # noqa: E402
+                      lessons, questions, typeset)
 
 # algebrakit's question maker for the Algebra page. boards has already put
 # algebrakit on the path when it can be found; without it there is no page.
@@ -480,6 +483,82 @@ class AlgebraPage:
         self.tile.show(page)
 
 
+# --- Charts -------------------------------------------------------------------
+
+class ChartsPage:
+    """The Charts page: statistical charts from real data (Pokémon and
+    countries) to read, finish drawing and answer questions on.
+
+    Chips across the top choose the data, the chart, the part of the data
+    (a generation, a continent), what is measured, and Read it or Draw it.
+    Each chip deals a fresh chart from mathskit.charts; New data deals
+    another of the same. Everything after that (taps, drags, Check,
+    questions) happens in the page (chart_page.py), so nothing jumps.
+    """
+
+    def __init__(self, window, extras):
+        self.tile = web_tiles.Cards(window, on_pick=self.picked,
+                                    zoom_key='mathskit-charts', extra_css=extras)
+        self.rng = random.Random()
+        found = datasets.available()
+        self.source_key = found[0] if found else 'pokemon'
+        self.kind = 'bar'
+        self.mode = 'look'
+        self.scope = None
+        self.measure = None
+        self.deal()
+
+    def deal(self):
+        """A fresh chart for the current chips, or a message saying why not."""
+        self.made = None
+        self.problem = None
+        try:
+            source = datasets.load(self.source_key)
+            self.made = charts.deal(source, self.kind, self.scope, self.measure, self.mode, self.rng)
+        except (datasets.MissingData, charts.NotEnoughData) as error:
+            self.problem = str(error)
+        self.show()
+
+    def picked(self, item):
+        if item == 'new':
+            return self.deal()
+        if not isinstance(item, tuple):
+            return
+        what, value = item
+        if what == 'source':
+            self.source_key, self.scope, self.measure = value, None, None
+        elif what == 'kind':
+            self.kind, self.measure = value, None
+        elif what == 'scope':
+            self.scope = value
+        elif what == 'measure':
+            self.measure = value
+        elif what == 'mode':
+            self.mode = value
+        self.deal()
+
+    def show(self):
+        page = cards.Page()
+        scopes = charts.scopes_for(self.source_key)
+        recipes = charts.recipes_for(self.source_key, self.kind)
+        scope = self.scope or scopes[0][0]
+        measure = self.measure or recipes[0][0]
+        rows = [
+            [(datasets.TITLES[key], ('source', key), key == self.source_key) for key in datasets.FILES],
+            [(label, ('kind', kind), kind == self.kind) for kind, label in charts.KINDS],
+            [(label, ('scope', key), key == scope) for key, label in scopes],
+        ]
+        if len(recipes) > 1:
+            rows.append([(label, ('measure', key), key == measure) for key, label in recipes])
+        rows.append([(label, ('mode', key), key == self.mode) for key, label in charts.MODES]
+                    + [('New data ▶', 'new', False)])
+        parts = [prose.heading('Charts', 1)] + [button_row(page.go, row) for row in rows]
+        if self.made is not None:
+            parts.append(chart_page.html(self.made))
+        else:
+            parts.append(blocks.text(self.problem or 'Nothing to show.'))
+        page.prose(*parts)
+        self.tile.show(page)
 # --- Not on a tab: kept to reuse in a graphs lesson ----------------------------
 
 def graphs_page():
@@ -547,6 +626,10 @@ def main():
     window.add_page('Lesson', lesson_page.tile)
     window.add_page('Facts', facts_page.tile)
     window.add_page('Bank', bank.tile)
+    # Charts only where the datasets are (here or in iCloud): they never ship.
+    if datasets.available():
+        charts_page = ChartsPage(window, extras)
+        window.add_page('Charts', charts_page.tile)
     if algebra_equations is not None:
         algebra = AlgebraPage(window, extras)
         window.add_page('Algebra', algebra.tile)
