@@ -35,8 +35,13 @@ FILES = {'pokemon': 'pokemon.csv', 'countries': 'countries.csv'}
 TITLES = {'pokemon': 'Pokémon', 'countries': 'Countries'}
 
 # Columns kept as text; every other column is read as a number.
-TEXT_COLUMNS = {'name', 'type1', 'type2', 'colour', 'legendary', 'code', 'continent', 'subregion',
+TEXT_COLUMNS = {'name', 'type1', 'type2', 'colour', 'legendary', 'code', 'iso2', 'continent', 'subregion',
                 'population_year'}
+
+# Pokémon sprites (tools/fetch_sprites.py): library/datasets/sprites/<number>.png.
+SPRITE_FOLDER = 'sprites'
+# Most sprites one chart carries (each about 1 KB inside the page).
+SPRITE_LIMIT = 300
 
 # ---- Loading -----------------------------------------------------------------
 
@@ -143,6 +148,39 @@ def available(search=None):
     return [key for key, name in FILES.items()
             if any(os.path.isfile(os.path.join(folder, name)) or os.path.exists(placeholder(folder, name))
                    for folder in search)]
+
+
+_sprites = {}
+
+
+def sprites(numbers, search=None, limit=SPRITE_LIMIT):
+    """{number: 'data:image/png;base64,...'} for the Pokédex numbers whose
+    sprite is on this device; none when there are more than limit (a chart
+    of every Pokémon shows names only). A sprite iCloud has not downloaded
+    yet is asked for and turns up on a later chart."""
+    import base64
+    numbers = sorted({int(number) for number in numbers if number})
+    if not numbers or len(numbers) > limit:
+        return {}
+    search = folders() if search is None else search
+    homes = [os.path.join(folder, SPRITE_FOLDER) for folder in search]
+    homes = [home for home in homes if os.path.isdir(home)]
+    found = {}
+    for number in numbers:
+        if number in _sprites:
+            found[number] = _sprites[number]
+            continue
+        name = '%d.png' % number
+        for home in homes:
+            path = os.path.join(home, name)
+            if os.path.isfile(path):
+                with open(path, 'rb') as handle:
+                    _sprites[number] = 'data:image/png;base64,' + base64.b64encode(handle.read()).decode('ascii')
+                found[number] = _sprites[number]
+                break
+            if os.path.exists(placeholder(home, name)):
+                request_download(home, name)
+    return found
 
 
 def to_row(raw):

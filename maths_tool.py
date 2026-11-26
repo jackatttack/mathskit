@@ -554,7 +554,8 @@ class ChartsPage:
                     + [('New data ▶', 'new', False)])
         parts = [prose.heading('Charts', 1)] + [button_row(page.go, row) for row in rows]
         if self.made is not None:
-            parts.append(chart_page.html(self.made))
+            sprites = datasets.sprites(chart_page.sprite_numbers(self.made))
+            parts.append(chart_page.html(self.made, sprites))
         else:
             parts.append(blocks.text(self.problem or 'Nothing to show.'))
         page.prose(*parts)

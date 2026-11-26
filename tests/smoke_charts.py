@@ -55,7 +55,7 @@ def made_up_countries(rng):
             gdp = int(rng.lognormvariate(8.8, 1.1))
             urban = round(rng.uniform(15, 98), 1)
             life = round(min(86, 50 + 6 * (gdp ** 0.15) + rng.uniform(-6, 6)), 1)
-            rows.append({'code': '%s%d' % (continent[:2].upper(), index), 'name': '%s %d' % (continent, index),
+            rows.append({'code': '%s%d' % (continent[:2].upper(), index), 'iso2': 'GB', 'name': '%s %d' % (continent, index),
                          'continent': continent, 'subregion': rng.choice(CONTINENTS[continent]),
                          'population': int(rng.lognormvariate(16, 1.6)), 'area_km2': rng.randint(300, 900000),
                          'life_expectancy': life if rng.random() > 0.05 else None,
@@ -96,8 +96,34 @@ def check_deal(made, label):
         for point in chart['points']:
             assert chart['x'][0] <= point['x'] <= chart['x'][1], (label, point, chart['x'])
             assert chart['y'][0] <= point['y'] <= chart['y'][1], (label, point, chart['y'])
-    html = chart_page.html(made)
+    check_members(made, label)
+    html = chart_page.html(made, sprites={1: 'data:image/png;base64,AAAA'})
     assert 'ch-chart' in html
+
+
+def check_members(made, label):
+    """The data drawer's members agree with what the chart draws."""
+    chart, kind = made['chart'], made['kind']
+    assert chart.get('data_title'), (label, 'no data_title')
+    if kind == 'bar':
+        sizes = [len(group) for group in chart['members']]
+        if made['table'] and made['table']['headers'][1] == 'Frequency':
+            assert sizes == chart['values'], (label, sizes, chart['values'])
+        else:
+            assert sizes == [1] * len(chart['values']), label
+    if kind == 'pie':
+        assert [len(group) for group in chart['members']] == chart['values'], label
+    if kind == 'histogram':
+        for variant in chart['variants']:
+            assert [len(group) for group in variant['members']] == variant['counts'], label
+    if kind == 'cumulative':
+        assert len(chart['members']) == chart['total'], label
+    if kind == 'box':
+        for group in chart['groups']:
+            assert group['members'], label
+    for found in (chart.get('members') or []):
+        for item in (found if isinstance(found, list) else [found]):
+            assert item['name'], label
 
 
 def deal_everything(sources):

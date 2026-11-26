@@ -21,17 +21,27 @@ A Deal is a plain dict (so it goes to the page as JSON):
 CHART SPECS (every number already worked out here; the page only draws):
 
     bar         labels, values, y [start, end, step], hidden [bar indices],
-                x_label, y_label
-    histogram   variants [{width, edges, counts, y}], current (variant index),
+                x_label, y_label, members [per bar: [Member]]
+    histogram   variants [{width, edges, counts, y, members [per class]}],
+                current (variant index),
                 hidden [bar indices, current variant], x_label, y_label
     pie         labels, values, angles (degrees, sum 360), hidden [boundary
-                indices: boundary i sits between sector i-1 and sector i]
+                indices: boundary i sits between sector i-1 and sector i],
+                members [per sector]
     cumulative  points [[x, cf], ...] starting at cf 0, total, x and y axes,
-                hidden [point indices], x_label, y_label
-    box         groups [{name, five: [min, lq, median, uq, max]}], x axis,
+                hidden [point indices], x_label, y_label, members (the
+                sample, smallest first)
+    box         groups [{name, five: [min, lq, median, uq, max], members
+                (smallest first)}], x axis,
                 complete (true: group 0's five markers are dragged), snap
-    scatter     points [{x, y, name}], hidden [point indices], x and y axes,
+    scatter     points [{x, y, name, value, sprite or flag}], hidden [point
+                indices], x and y axes,
                 snap [x, y], fit [gradient, intercept] or None, x_label, y_label
+
+A Member is one Pokémon or country behind a part of the chart, for the
+page's data drawer: {'name', 'value' (text, when the chart measures one),
+'sprite' (Pokédex number) or 'flag' (two-letter country code)}. Every
+spec also has data_title ('40 Pokémon') for the drawer's Data button.
 
 Raises NotEnoughData when a scope has too little data for the chart.
 GCSE Foundation first: small samples, friendly totals (pie teams of 12, 18,
@@ -207,6 +217,26 @@ def label_of(row):
     return row.get('name', '?')
 
 
+def member(source, row, value=None):
+    """One Member (see the contract above) for the data drawer."""
+    found = {'name': label_of(row)}
+    if value is not None:
+        found['value'] = stats.number_text(value)
+    if source.key == 'pokemon' and row.get('number'):
+        found['sprite'] = row['number']
+    elif row.get('iso2'):
+        found['flag'] = row['iso2']
+    return found
+
+
+def members_by_name(source, rows, measure=None):
+    """Members for rows, by name (or by value, smallest first, when measure is given)."""
+    if measure is None:
+        return [member(source, row) for row in sorted(rows, key=label_of)]
+    ordered = sorted(rows, key=lambda row: (plain_number(source, row, measure), label_of(row)))
+    return [member(source, row, plain_number(source, row, measure)) for row in ordered]
+
+
 def category(source, row, measure, scope):
     """The group a row falls in for a bar or pie chart."""
     if measure == 'place':
@@ -289,6 +319,9 @@ def bar_chart(source, rows, scope, measure, mode, rng):
         if len(pairs) < 3:
             raise NotEnoughData('Too few groups for a bar chart here.')
         pairs.sort(key=lambda pair: str(pair[0]))
+        members = [members_by_name(source, [row for row in rows
+                                            if category(source, row, measure, scope) == label])
+                   for label, _ in pairs]
         word = {'type1': 'type', 'colour': 'colour', 'place': place_word(scope)}[measure]
         title = 'Number of %s by %s in %s' % (many, word, scope_words(source, scope))
         if len(stats.counts(values)) > BAR_COUNT:
@@ -307,6 +340,7 @@ def bar_chart(source, rows, scope, measure, mode, rng):
             chosen = rng.sample(usable, min(BAR_COUNT, len(usable)))
             title = '%s of %d %s' % (axis_label(source, measure).split(' (')[0], len(chosen), many)
         pairs = [(label_of(row), int(round(plain_number(source, row, measure)))) for row in chosen]
+        members = [[member(source, row, value)] for row, (_, value) in zip(chosen, pairs)]
         word = short_name(source, measure)
         y_label = axis_label(source, measure)
         counting = False
@@ -315,7 +349,9 @@ def bar_chart(source, rows, scope, measure, mode, rng):
     start, end, step = stats.nice_axis(0, max(values), lines=6, from_zero=True)
     hidden = hide_some(rng, len(values), 2) if mode == 'complete' else []
     spec = {'labels': labels, 'values': values, 'y': [start, end, step], 'hidden': hidden,
-            'x_label': word.capitalize() if counting else '', 'y_label': y_label, 'snap': 1}
+            'x_label': word.capitalize() if counting else '', 'y_label': y_label, 'snap': 1,
+            'members': members,
+            'data_title': '%d %s' % (sum(len(group) for group in members), many)}
     made = {'title': title, 'chart': spec, 'questions': bar_questions(rng, pairs, counting, many, word)}
     if mode == 'complete':
         made['task'] = 'Drag the dashed bars up to the right height. The table has the numbers.'
@@ -388,6 +424,10 @@ def pie_chart(source, rows, scope, measure, mode, rng):
     labels = [label for label, _ in pairs]
     values = [count for _, count in pairs]
     angles = [count * each for count in values]
+    named = set(labels)
+    members = [members_by_name(source, [row for row in team if category(source, row, measure, scope) == label
+                                        or (label == 'Other' and category(source, row, measure, scope) not in named)])
+               for label in labels]
     hidden = []
     if mode == 'complete':
         # Boundaries whose neighbours stay fixed, so each handle has a clear range.
@@ -400,7 +440,8 @@ def pie_chart(source, rows, scope, measure, mode, rng):
                 break
         hidden.sort()
     word = {'colour': 'colour', 'type1': 'type', 'place': place_word(scope)}[measure]
-    spec = {'labels': labels, 'values': values, 'angles': angles, 'hidden': hidden, 'total': size}
+    spec = {'labels': labels, 'values': values, 'angles': angles, 'hidden': hidden, 'total': size,
+            'members': members, 'data_title': '%d %s' % (size, many)}
     made = {'title': '%s of %d %s from %s' % (word.capitalize(), size, many, scope_words(source, scope)),
             'chart': spec, 'questions': pie_questions(rng, pairs, size, many, word)}
     missing = set()
@@ -460,8 +501,8 @@ def class_name(low, high, word):
 
 def histogram(source, rows, scope, measure, mode, rng):
     one, many = THING[source.key]
-    values = [plain_number(source, row, measure) for row in rows]
-    values = [value for value in values if value is not None]
+    counted = [row for row in rows if plain_number(source, row, measure) is not None]
+    values = [plain_number(source, row, measure) for row in counted]
     if len(values) < 12:
         raise NotEnoughData('Too few %s with that figure here.' % many)
     word = short_name(source, measure)
@@ -470,11 +511,20 @@ def histogram(source, rows, scope, measure, mode, rng):
         edges = stats.class_edges(values, width)
         counts = stats.class_counts(values, edges)
         start, end, step = stats.nice_axis(0, max(counts), lines=6, from_zero=True)
-        variants.append({'width': width, 'edges': edges, 'counts': counts, 'y': [start, end, step]})
+        classes = [[] for _ in counts]
+        for row in counted:
+            value = plain_number(source, row, measure)
+            for index in range(len(counts)):
+                if edges[index] <= value < edges[index + 1]:
+                    classes[index].append(row)
+                    break
+        variants.append({'width': width, 'edges': edges, 'counts': counts, 'y': [start, end, step],
+                         'members': [members_by_name(source, group, measure) for group in classes]})
     main = variants[0]
     hidden = hide_some(rng, len(main['counts']), 3) if mode == 'complete' else []
     spec = {'variants': variants if mode == 'look' else [main], 'current': 0, 'hidden': hidden,
-            'x_label': axis_label(source, measure), 'y_label': 'Frequency'}
+            'x_label': axis_label(source, measure), 'y_label': 'Frequency',
+            'data_title': '%d %s' % (len(values), many)}
     made = {'title': '%s of %d %s from %s' % (axis_label(source, measure).split(' (')[0], len(values), many,
                                              scope_words(source, scope)),
             'chart': spec,
@@ -516,11 +566,11 @@ def histogram_questions(rng, edges, counts, many, word):
 
 def cumulative(source, rows, scope, measure, mode, rng):
     one, many = THING[source.key]
-    usable = [plain_number(source, row, measure) for row in rows]
-    usable = [value for value in usable if value is not None]
+    usable = [row for row in rows if plain_number(source, row, measure) is not None]
     if len(usable) < 20:
         raise NotEnoughData('Too few %s with that figure here.' % many)
-    values = rng.sample(usable, min(CUMULATIVE_SAMPLE, len(usable)))
+    sample = rng.sample(usable, min(CUMULATIVE_SAMPLE, len(usable)))
+    values = [plain_number(source, row, measure) for row in sample]
     width = CLASS_WIDTHS[measure][0]
     edges = stats.class_edges(values, width)
     counts = stats.class_counts(values, edges)
@@ -532,7 +582,8 @@ def cumulative(source, rows, scope, measure, mode, rng):
     hidden = hide_some(rng, len(points), 3, first=1) if mode == 'complete' else []
     word = short_name(source, measure)
     spec = {'points': points, 'total': size, 'x': [x_start, x_end, x_step], 'y': [y_start, y_end, y_step],
-            'hidden': hidden, 'x_label': axis_label(source, measure), 'y_label': 'Cumulative frequency'}
+            'hidden': hidden, 'x_label': axis_label(source, measure), 'y_label': 'Cumulative frequency',
+            'members': members_by_name(source, sample, measure), 'data_title': '%d %s' % (size, many)}
     made = {'title': '%s of %d %s from %s' % (axis_label(source, measure).split(' (')[0], size, many,
                                              scope_words(source, scope)),
             'chart': spec, 'questions': cumulative_questions(rng, points, size, many, word, width)}
@@ -581,13 +632,13 @@ def cumulative_questions(rng, points, size, many, word, width):
 
 
 def box_groups(source, rows, scope, measure, rng):
-    """Two (name, values) groups to compare: two types, or two continents."""
+    """Two (name, rows) groups to compare: two types, or two continents."""
     if source.key == 'pokemon':
         by_type = {}
         for row in rows:
             value = plain_number(source, row, measure)
             if value is not None:
-                by_type.setdefault(row['type1'], []).append(value)
+                by_type.setdefault(row['type1'], []).append(row)
         names = sorted(name for name, values in by_type.items() if len(values) >= BOX_SMALLEST_GROUP)
         if len(names) < 2:
             raise NotEnoughData('Too few Pokémon of any two types here.')
@@ -597,7 +648,7 @@ def box_groups(source, rows, scope, measure, rng):
     for row in source.rows:
         value = plain_number(source, row, measure)
         if value is not None:
-            by_place.setdefault(row['continent'], []).append(value)
+            by_place.setdefault(row['continent'], []).append(row)
     names = sorted(name for name, values in by_place.items() if len(values) >= BOX_SMALLEST_GROUP)
     chosen = [scope] if scope in names else []
     others = [name for name in names if name not in chosen]
@@ -610,26 +661,38 @@ def box_plot(source, rows, scope, measure, mode, rng):
     one, many = THING[source.key]
     word = short_name(source, measure)
     if mode == 'complete':
-        usable = [plain_number(source, row, measure) for row in rows]
-        usable = [int(round(value)) for value in usable if value is not None]
+        usable = [row for row in rows if plain_number(source, row, measure) is not None]
         if len(usable) < BOX_SAMPLE:
             raise NotEnoughData('Too few %s with that figure here.' % many)
-        values = rng.sample(usable, BOX_SAMPLE)
-        groups = [('%d %s' % (BOX_SAMPLE, many), values)]
+        # Whole numbers, so the five markers land on values the student can read.
+        groups = [('%d %s' % (BOX_SAMPLE, many), rng.sample(usable, BOX_SAMPLE))]
+        whole = True
     else:
         groups = box_groups(source, rows, scope, measure, rng)
-    fives = [(name, stats.five_numbers(values)) for name, values in groups]
+        whole = False
+
+    def value_of(row):
+        value = plain_number(source, row, measure)
+        return int(round(value)) if whole else value
+
+    fives = [(name, stats.five_numbers([value_of(row) for row in group])) for name, group in groups]
+    group_members = []
+    for _, group in groups:
+        ordered = sorted(group, key=lambda row: (value_of(row), label_of(row)))
+        group_members.append([member(source, row, value_of(row)) for row in ordered])
     low = min(five[0] for _, five in fives)
     high = max(five[4] for _, five in fives)
     start, end, step = stats.nice_axis(low, high, lines=8)
-    spec = {'groups': [{'name': name, 'five': [stats.tidy(value) for value in five]} for name, five in fives],
+    spec = {'groups': [{'name': name, 'five': [stats.tidy(value) for value in five], 'members': found}
+                       for (name, five), found in zip(fives, group_members)],
             'x': [start, end, step], 'complete': mode == 'complete', 'snap': 1,
-            'x_label': axis_label(source, measure)}
+            'x_label': axis_label(source, measure),
+            'data_title': '%d %s' % (sum(len(found) for found in group_members), many)}
     made = {'chart': spec}
     if mode == 'complete':
         made['title'] = '%s of %d %s from %s' % (axis_label(source, measure).split(' (')[0], BOX_SAMPLE,
                                                 many, scope_words(source, scope))
-        made['values'] = groups[0][1]
+        made['values'] = [value_of(row) for row in groups[0][1]]
         made['task'] = ('Put the values in order. Find the lowest, the lower quartile (3rd value), the median '
                         '(6th), the upper quartile (9th) and the highest. Drag each marker to it.')
         made['questions'] = box_single_questions(rng, fives[0][1], word, step)
@@ -698,7 +761,7 @@ def scatter(source, rows, scope, measure, mode, rng):
             continue
         if (across in SCATTER_LIMITS and x > SCATTER_LIMITS[across]) or (up in SCATTER_LIMITS and y > SCATTER_LIMITS[up]):
             continue
-        usable.append((label_of(row), x, y))
+        usable.append((row, x, y))
     if len(usable) < 8:
         raise NotEnoughData('Too few %s with both figures here.' % many)
     chosen = rng.sample(usable, min(SCATTER_SAMPLE, len(usable)))
@@ -709,15 +772,19 @@ def scatter(source, rows, scope, measure, mode, rng):
     snap = [stats.minor_step(x_axis[2]), stats.minor_step(y_axis[2])]
     hidden = hide_some(rng, len(chosen), SCATTER_HIDDEN) if mode == 'complete' else []
     points = []
-    for index, (name, x, y) in enumerate(chosen):
+    for index, (row, x, y) in enumerate(chosen):
         if index in hidden:
             x, y = snap_to(x, snap[0]), snap_to(y, snap[1])
-        points.append({'x': stats.tidy(round(x, 3)), 'y': stats.tidy(round(y, 3)), 'name': name})
+        point = member(source, row)
+        point.update({'x': stats.tidy(round(x, 3)), 'y': stats.tidy(round(y, 3)),
+                      'value': '%s, %s' % (stats.number_text(x), stats.number_text(y))})
+        points.append(point)
     pairs = [(point['x'], point['y']) for point in points]
     gradient, intercept = stats.best_fit(pairs)
     spec = {'points': points, 'hidden': hidden, 'x': list(x_axis), 'y': list(y_axis), 'snap': snap,
             'fit': [gradient, intercept], 'x_label': axis_label(source, across),
-            'y_label': axis_label(source, up)}
+            'y_label': axis_label(source, up), 'data_title': '%d %s' % (len(points), many),
+            'value_names': [short_name(source, across), short_name(source, up)]}
     made = {'title': '%s and %s of %d %s' % (axis_label(source, across).split(' (')[0],
                                              axis_label(source, up).split(' (')[0].lower(), len(points), many),
             'chart': spec,

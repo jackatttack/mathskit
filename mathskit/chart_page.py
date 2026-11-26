@@ -18,6 +18,7 @@ Everything after the draw happens in the page, with no trip to Python:
     Histogram: class width chips       switch between widths Python worked out
     Scatter: Line of best fit          shows the least-squares line
     Box plot values                    tap to tick one off; Put in order sorts
+    Resizing the window                keeps all of this (window.ekKeepers)
     Questions                          one at a time; a right answer goes
                                          green and explains why, a wrong one
                                          shakes and can be tried again
@@ -33,6 +34,8 @@ import json
 
 # ---- Words on the page (editable) --------------------------------------------------
 
+DATA_LABEL = 'Data'
+NAMES_LABEL = 'Names'
 CHECK_LABEL = 'Check'
 SHOW_LABEL = 'Show me'
 TABLE_LABEL = 'Table'
@@ -105,8 +108,10 @@ def button(label, action, lit=False):
                                                                escape(label))
 
 
-def html(deal):
-    """The Charts page body for one deal (see charts.py for its fields)."""
+def html(deal, sprites=None):
+    """The Charts page body for one deal (see charts.py for its fields).
+    sprites: {Pokédex number: data URI} from datasets.sprites, shown beside
+    names in the data drawer; only the ones this chart uses are sent."""
     kind, mode = deal['kind'], deal['mode']
     parts = ['<div class="ch-deal" data-kind="%s" data-mode="%s">' % (escape(kind), escape(mode)),
              '<div class="ch-title">%s</div>' % escape(deal['title'])]
@@ -119,8 +124,11 @@ def html(deal):
     if deal.get('table'):
         parts.append(table_html(deal['table'], shown=mode == 'complete'))
     chart = with_colours(kind, deal['chart'])
+    if sprites:
+        chart = dict(chart, sprites={str(number): uri for number, uri in sprites.items()})
     parts.append('<div class="ch-chart" data-chart="%s"></div>' % escape(json.dumps(chart)))
     parts.append(tools_html(deal))
+    parts.append('<div class="ch-drawer ch-hidden"></div>')
     parts.append(questions_html(deal['questions']))
     parts.append('</div>')
     return ''.join(parts)
@@ -156,6 +164,8 @@ def tools_html(deal):
         buttons += [button(MEDIAN_LABEL, 'median'), button(QUARTILES_LABEL, 'quartiles')]
     if kind == 'scatter':
         buttons.append(button(FIT_LABEL, 'fit'))
+        buttons.append(button(NAMES_LABEL, 'names'))
+    buttons.append(button(DATA_LABEL, 'data'))
     if mode == 'complete':
         hint = SCATTER_DRAW_HINT if kind == 'scatter' else DRAW_HINT
     else:
@@ -182,6 +192,27 @@ def questions_html(questions):
                          ('<b>%s</b> ' % escape(DONE_LABEL)) if last else '✔ ', escape(item['why']),
                          after))
     return '<div class="ch-questions">%s</div>' % ''.join(blocks)
+
+
+def sprite_numbers(deal):
+    """The Pokédex numbers a deal's data drawer can show (for datasets.sprites)."""
+    chart = deal['chart']
+    found = set()
+
+    def take(items):
+        for item in items or []:
+            if isinstance(item, list):
+                take(item)
+            elif isinstance(item, dict) and item.get('sprite'):
+                found.add(item['sprite'])
+
+    take(chart.get('members'))
+    take(chart.get('points'))
+    for variant in chart.get('variants', [])[:1]:
+        take(variant.get('members'))
+    for group in chart.get('groups', []):
+        take(group.get('members'))
+    return found
 
 
 def format_number(value):
@@ -241,6 +272,24 @@ CSS = """
 @keyframes ch-pop { 0% { transform: scale(1); } 40% { transform: scale(1.03); } 100% { transform: scale(1); } }
 .ch-readout { min-height: 24px; margin: 6px 2px 0; font-size: 16px; color: var(--muted); }
 .ch-readout.ch-said { color: var(--text); font-weight: 600; }
+.ch-drawer { background: var(--wash); border-radius: 14px; padding: 10px 12px 12px; margin: 10px 0; }
+.ch-drawer-head { display: flex; align-items: center; gap: 10px; }
+.ch-drawer-title { flex: 1; font-size: 17px; font-weight: 650; }
+.ch-drawer-note { color: var(--muted); font-size: 14px; margin: 4px 0 2px; }
+.ch-drawer-section { font-size: 14px; font-weight: 650; color: var(--muted); margin: 12px 0 4px; }
+.ch-members { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.ch-member { display: inline-flex; align-items: center; gap: 6px; padding: 4px 10px 4px 4px; border-radius: 12px;
+    background: var(--card); border: 1.5px solid var(--line); font-size: 15px; min-height: 34px;
+    cursor: pointer; -webkit-user-select: none; user-select: none; }
+.ch-member img { width: 44px; height: 44px; image-rendering: pixelated; margin: -4px -2px; }
+.ch-member .ch-flag { font-size: 24px; padding-left: 4px; }
+.ch-member .ch-num { font: 12px Menlo, monospace; color: var(--muted); min-width: 18px; text-align: right;
+    padding-left: 4px; }
+.ch-member .ch-val { font-weight: 650; }
+.ch-member .ch-tag { font-size: 11px; font-weight: 700; color: #fff; background: var(--accent);
+    border-radius: 6px; padding: 1px 5px; }
+.ch-member.ch-lit { border-color: var(--accent); background: var(--wash-strong); }
+.ch-more { color: var(--muted); font-size: 14px; align-self: center; }
 .ch-questions { margin-top: 14px; }
 .ch-q { background: var(--wash); border-radius: 14px; padding: 12px 14px; margin: 8px 0; }
 .ch-qcount { font-size: 13px; color: var(--muted); }
@@ -461,6 +510,7 @@ SCRIPT = r"""
     var index = +parts[1];
     state.picked = index;
     say(state.el, barName(state, index) + ': ' + num(state.values[index]), true);
+    showPart(state, index);
   }
 
   function barCheck(state) {
@@ -573,6 +623,7 @@ SCRIPT = r"""
     var angle = state.edges[i + 1] - state.edges[i];
     say(state.el, state.spec.labels[i] + ': ' + state.spec.values[i] + ' of ' + state.spec.total +
         ' · ' + num(angle) + '°', true);
+    showPart(state, i);
   }
 
   function pieCheck(state) {
@@ -667,7 +718,10 @@ SCRIPT = r"""
 
   function cumulativeTap(state, key) {
     var parts = key.split(':');
-    if (parts[0] === 'cf') { cumulativeRead(state, [+parts[1]]); }
+    if (parts[0] === 'cf') {
+      cumulativeRead(state, [+parts[1]]);
+      showSample(state, +parts[1]);
+    }
   }
 
   function cumulativeCheck(state) {
@@ -760,6 +814,7 @@ SCRIPT = r"""
     if (parts[0] !== 'box') { return; }
     var g = +parts[1], m = +parts[2];
     say(state.el, state.spec.groups[g].name + ': ' + BOX_NAMES[m].toLowerCase() + ' ' + num(state.groups[g][m]), true);
+    if (!state.spec.complete) { showGroup(state, g); }
   }
 
   function boxCheck(state) {
@@ -822,6 +877,11 @@ SCRIPT = r"""
       var point = spec.points[i];
       var picked = state.picked === i;
       body += cross(sx(point.x), sy(point.y), picked ? PALETTE[3] : PALETTE[0], picked ? 7 : 5, picked ? 3.5 : 2.5);
+      if (state.names || picked) {
+        var right = sx(point.x) < f.w - 90;
+        body += text(sx(point.x) + (right ? 9 : -9), sy(point.y) - 6, point.name, right ? 'start' : 'end',
+                     ' font-size="11"' + (picked ? ' font-weight="700"' : ''));
+      }
       if (!state.hidden.length) {
         body += '<circle cx="' + sx(point.x) + '" cy="' + sy(point.y) + '" r="15" fill="#000" fill-opacity="0" data-t="pt:' + i + '"/>';
       }
@@ -846,6 +906,7 @@ SCRIPT = r"""
       var point = spec.points[+parts[1]];
       state.picked = +parts[1];
       say(state.el, point.name + ': (' + num(point.x) + ', ' + num(point.y) + ')', true);
+      showPoint(state, +parts[1]);
     }
   }
 
@@ -891,6 +952,259 @@ SCRIPT = r"""
       return [state.spec.points[index].x, state.spec.points[index].y];
     });
   }
+
+  // ---- The data drawer: who is behind a part of the chart ----------------------------------
+
+  var DRAWER_MOST = 160;     // members shown before "and N more"
+
+  function flagOf(code) {
+    if (!code || code.length !== 2 || !String.fromCodePoint) { return ''; }
+    var upper = code.toUpperCase();
+    return String.fromCodePoint(0x1F1E6 + upper.charCodeAt(0) - 65, 0x1F1E6 + upper.charCodeAt(1) - 65);
+  }
+
+  function memberChip(state, item, options) {
+    var sprite = item.sprite && state.spec.sprites ? state.spec.sprites[String(item.sprite)] : null;
+    var picture = sprite ? '<img src="' + sprite + '" alt="">' :
+                  item.flag ? '<span class="ch-flag">' + flagOf(item.flag) + '</span>' : '';
+    var number = options.number ? '<span class="ch-num">' + options.number + '</span>' : '';
+    var tag = options.tag ? '<span class="ch-tag">' + esc(options.tag) + '</span>' : '';
+    var value = item.value !== undefined ? ' <span class="ch-val">' + esc(item.value) + '</span>' : '';
+    var link = options.point !== undefined ? ' data-point="' + options.point + '"' : '';
+    return '<span class="ch-member' + (options.lit ? ' ch-lit' : '') + '" data-ch="member"' + link + '>' +
+           number + picture + '<span>' + esc(item.name) + value + '</span>' + tag + '</span>';
+  }
+
+  // sections: [{title, members, numbered, lit: {index: true}, tags: {index: 'Q1'},
+  //             points: true, pointIndex: [scatter point index per member]}]
+  function openDrawer(state, title, sections, note) {
+    var box = deal(state.el);
+    var drawer = box ? box.querySelector('.ch-drawer') : null;
+    if (!drawer) { return; }
+    var html = '<div class="ch-drawer-head"><span class="ch-drawer-title">' + esc(title) + '</span>' +
+               '<span class="ch-btn" data-ch="drawer-close">✕</span></div>';
+    if (note) { html += '<div class="ch-drawer-note">' + esc(note) + '</div>'; }
+    for (var s = 0; s < sections.length; s++) {
+      var section = sections[s];
+      if (section.title) { html += '<div class="ch-drawer-section">' + esc(section.title) + '</div>'; }
+      var chips = '';
+      var list = section.members || [];
+      for (var i = 0; i < list.length && i < DRAWER_MOST; i++) {
+        chips += memberChip(state, list[i], {
+          number: section.numbered ? i + 1 : null,
+          lit: section.lit && section.lit[i],
+          tag: section.tags && section.tags[i],
+          point: section.points ? (section.pointIndex ? section.pointIndex[i] : i) : undefined
+        });
+      }
+      if (list.length > DRAWER_MOST) { chips += '<span class="ch-more">and ' + (list.length - DRAWER_MOST) + ' more</span>'; }
+      if (!list.length) { chips = '<span class="ch-more">none</span>'; }
+      html += '<div class="ch-members">' + chips + '</div>';
+    }
+    drawer.innerHTML = html;
+    drawer.classList.remove('ch-hidden');
+  }
+
+  function closeDrawer(el) {
+    var box = deal(el);
+    var drawer = box ? box.querySelector('.ch-drawer') : null;
+    if (drawer) { drawer.classList.add('ch-hidden'); drawer.innerHTML = ''; }
+  }
+
+  function ordinal(n) {
+    var tens = n % 100, ones = n % 10;
+    var end = (tens >= 11 && tens <= 13) ? 'th' : ones === 1 ? 'st' : ones === 2 ? 'nd' : ones === 3 ? 'rd' : 'th';
+    return n + end;
+  }
+
+  // Where the (n + 1)/4 rule puts a quartile: 'the 3rd value' or 'between the 4th and 5th'.
+  function positionWords(position) {
+    if (position === Math.floor(position)) { return 'the ' + ordinal(position) + ' value'; }
+    return 'between the ' + ordinal(Math.floor(position)) + ' and ' + ordinal(Math.ceil(position));
+  }
+
+  function partMembers(state, index) {
+    if (state.kind === 'histogram') { return state.spec.variants[state.variant || 0].members[index] || []; }
+    return (state.spec.members || [])[index] || [];
+  }
+
+  function thingWord(state) { return (state.spec.data_title || '').replace(/^\d+\s*/, ''); }
+
+  // A part of the chart was tapped: open the drawer on who is in it.
+  function showPart(state, index) {
+    state.drawerView = {show: 'part', arg: index};
+    var found = partMembers(state, index);
+    var name = state.kind === 'histogram' ? barName(state, index) : state.spec.labels[index];
+    if (state.kind === 'bar' && found.length === 1 && found[0].value !== undefined) {
+      openDrawer(state, name, [{members: found}]);
+      return;
+    }
+    openDrawer(state, name + ' · ' + found.length + ' ' + thingWord(state), [{members: found}]);
+  }
+
+  // A box plot group in order, with where each quartile comes from.
+  function showGroup(state, g) {
+    state.drawerView = {show: 'group', arg: g};
+    var group = state.spec.groups[g];
+    var size = group.members.length;
+    var tags = {}, lit = {}, words = [];
+    var spots = [[(size + 1) / 4, 'Q1', 'Lower quartile'], [(size + 1) / 2, 'M', 'Median'],
+                 [3 * (size + 1) / 4, 'Q3', 'Upper quartile']];
+    for (var i = 0; i < spots.length; i++) {
+      var position = spots[i][0];
+      words.push(spots[i][2] + ': ' + positionWords(position));
+      var low = Math.floor(position) - 1, high = Math.ceil(position) - 1;
+      tags[low] = spots[i][1]; lit[low] = true;
+      if (high !== low) { tags[high] = spots[i][1]; lit[high] = true; }
+    }
+    openDrawer(state, group.name + ' · ' + size + ' in order, smallest first',
+               [{members: group.members, numbered: true, tags: tags, lit: lit}], words.join(' · '));
+  }
+
+  // The cumulative frequency sample in order; below lights the first ones.
+  function showSample(state, below) {
+    state.drawerView = {show: 'sample', arg: below};
+    var lit = {};
+    for (var i = 0; i < below; i++) { lit[i] = true; }
+    var note = below ? 'The first ' + below + ' in order: the curve has counted these by that height.' : '';
+    openDrawer(state, (state.spec.data_title || '') + ' in order, smallest first',
+               [{members: state.spec.members || [], numbered: true, lit: lit}], note);
+  }
+
+  function showPoint(state, index) {
+    state.drawerView = {show: 'point', arg: index};
+    var point = state.spec.points[index];
+    var names = state.spec.value_names || ['x', 'y'];
+    openDrawer(state, point.name, [{members: [point], points: true, pointIndex: [index], lit: {0: true}}],
+               names[0] + ' ' + num(point.x) + ', ' + names[1] + ' ' + num(point.y));
+  }
+
+  // Data: everyone behind the chart, grouped the way the chart groups them.
+  function showAll(state) {
+    var spec = state.spec, sections = [], i;
+    state.drawerView = {show: 'all'};
+    if (state.kind === 'bar' || state.kind === 'pie') {
+      for (i = 0; i < spec.labels.length; i++) {
+        var group = (spec.members || [])[i] || [];
+        sections.push({title: spec.labels[i] + ' (' + group.length + ')', members: group});
+      }
+    } else if (state.kind === 'histogram') {
+      var variant = spec.variants[state.variant || 0];
+      for (i = 0; i < variant.members.length; i++) {
+        sections.push({title: barName(state, i) + ' (' + variant.members[i].length + ')', members: variant.members[i]});
+      }
+    } else if (state.kind === 'cumulative') {
+      showSample(state, 0);
+      state.drawerView = {show: 'all'};
+      return;
+    } else if (state.kind === 'box') {
+      for (i = 0; i < spec.groups.length; i++) {
+        sections.push({title: spec.groups[i].name + ', smallest first', members: spec.groups[i].members, numbered: true});
+      }
+    } else if (state.kind === 'scatter') {
+      var shown = [], index = [];
+      for (i = 0; i < spec.points.length; i++) {
+        if ((state.hidden || []).indexOf(i) >= 0) { continue; }
+        shown.push(spec.points[i]);
+        index.push(i);
+      }
+      var names = spec.value_names || ['x', 'y'];
+      sections.push({title: 'Name, ' + names[0] + ', ' + names[1] + ': tap one to find it on the graph',
+                     members: shown, points: true, pointIndex: index});
+    }
+    openDrawer(state, 'Data: ' + (spec.data_title || ''), sections);
+  }
+
+  // ---- Surviving a resize: editorkit's ekKeepers ----------------------------------------------
+  // Resizing the window swaps in a fresh web view that replays the page, so
+  // anything the page changed by itself would be lost. editorkit asks every
+  // keeper for its state before the swap and hands it back after
+  // (window.ekKeepers, editorkit 0.5.9). The chart keeps its drags, toggles,
+  // open drawer and where the questions are.
+
+  var KEPT_FIELDS = ['picked', 'variant', 'names', 'fit', 'values', 'edges', 'points', 'groups', 'placed',
+                     'reads', 'marks', 'drawerView'];
+
+  function signature(el) {
+    var box = deal(el);
+    var title = box ? box.querySelector('.ch-title') : null;
+    return (title ? title.textContent : '') + '|' + (el.getAttribute('data-chart') || '').length;
+  }
+
+  function questionState(box) {
+    var cards = box ? box.querySelectorAll('.ch-q') : [];
+    var out = [];
+    for (var i = 0; i < cards.length; i++) {
+      var options = cards[i].querySelectorAll('.ch-opt');
+      var marks = [];
+      for (var j = 0; j < options.length; j++) { marks.push(options[j].className); }
+      out.push({shown: !cards[i].classList.contains('ch-hidden'), solved: cards[i].classList.contains('ch-solved'),
+                options: marks});
+    }
+    return out;
+  }
+
+  function restoreQuestions(box, kept) {
+    var cards = box ? box.querySelectorAll('.ch-q') : [];
+    if (!kept || kept.length !== cards.length) { return; }
+    for (var i = 0; i < cards.length; i++) {
+      cards[i].classList.toggle('ch-hidden', !kept[i].shown);
+      cards[i].classList.toggle('ch-solved', kept[i].solved);
+      var options = cards[i].querySelectorAll('.ch-opt');
+      for (var j = 0; j < options.length && j < kept[i].options.length; j++) {
+        options[j].className = kept[i].options[j].replace(' ch-wrong', ' ch-off');   // no shake on return
+      }
+    }
+  }
+
+  function keepChart() {
+    var el = document.querySelector('.ch-chart');
+    var state = el && el.mkChart;
+    if (!state) { return null; }
+    var kept = {signature: signature(el), questions: questionState(deal(el))};
+    for (var i = 0; i < KEPT_FIELDS.length; i++) {
+      if (state[KEPT_FIELDS[i]] !== undefined) { kept[KEPT_FIELDS[i]] = state[KEPT_FIELDS[i]]; }
+    }
+    return kept;
+  }
+
+  function restoreChart(kept, tries) {
+    tries = tries || 0;
+    var el = document.querySelector('.ch-chart');
+    var state = el && el.mkChart;
+    if (!state) {
+      if (tries < 40) { setTimeout(function () { restoreChart(kept, tries + 1); }, 50); }
+      return;
+    }
+    if (!kept || kept.signature !== signature(el)) { return; }   // a different chart: leave it fresh
+    if (state.kind === 'histogram' && kept.variant) { state.variant = kept.variant; barSetup(state); }
+    for (var i = 0; i < KEPT_FIELDS.length; i++) {
+      if (kept[KEPT_FIELDS[i]] !== undefined) { state[KEPT_FIELDS[i]] = kept[KEPT_FIELDS[i]]; }
+    }
+    var box = deal(el);
+    var lit = {names: state.names, fit: state.fit};
+    for (var action in lit) {
+      var chip = box && box.querySelector('[data-ch="' + action + '"]');
+      if (chip) { chip.classList.toggle('ch-lit', !!lit[action]); }
+    }
+    var widths = box ? box.querySelectorAll('[data-ch^="width:"]') : [];
+    for (var w = 0; w < widths.length; w++) {
+      widths[w].classList.toggle('ch-lit', widths[w].getAttribute('data-ch') === 'width:' + (state.variant || 0));
+    }
+    restoreQuestions(box, kept.questions);
+    paint(state);
+    reopenDrawer(state);
+  }
+
+  function reopenDrawer(state) {
+    var view = state.drawerView;
+    if (!view) { return; }
+    var shows = {part: showPart, group: showGroup, sample: showSample, point: showPoint, all: showAll};
+    if (shows[view.show]) { shows[view.show](state, view.arg); }
+  }
+
+  window.ekKeepers = window.ekKeepers || {};
+  window.ekKeepers['mathskit-charts'] = {keep: keepChart, restore: restoreChart};
 
   // ---- One chart: setup, draw, touch --------------------------------------------------------------------
 
@@ -1056,6 +1370,10 @@ SCRIPT = r"""
     }
     if (action === 'order') { return orderValues(box, button); }
     if (action === 'value') { button.classList.toggle('ch-on'); return; }
+    if (action === 'drawer-close') {
+      if (state) { state.drawerView = null; }
+      return closeDrawer(button);
+    }
     if (!state) { return; }
     if (action === 'check' || action === 'show') {
       if (action === 'show') { state.kit.show(state); }
@@ -1078,6 +1396,25 @@ SCRIPT = r"""
     if (action === 'median') { cumulativeRead(state, [state.spec.total / 2]); redraw(state); return; }
     if (action === 'quartiles') {
       cumulativeRead(state, [state.spec.total / 4, 3 * state.spec.total / 4]);
+      redraw(state);
+      return;
+    }
+    if (action === 'data') { showAll(state); return; }
+    if (action === 'member') {
+      var point = button.getAttribute('data-point');
+      if (point !== null && state.kind === 'scatter') {
+        state.picked = +point;
+        var chips = button.parentNode.querySelectorAll('.ch-member');
+        for (var k = 0; k < chips.length; k++) { chips[k].classList.toggle('ch-lit', chips[k] === button); }
+        var shown = state.spec.points[+point];
+        say(state.el, shown.name + ': (' + num(shown.x) + ', ' + num(shown.y) + ')', true);
+        redraw(state);
+      }
+      return;
+    }
+    if (action === 'names') {
+      state.names = !state.names;
+      button.classList.toggle('ch-lit', state.names);
       redraw(state);
       return;
     }
